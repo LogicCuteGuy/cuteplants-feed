@@ -2,17 +2,17 @@
 //! Run by GitHub Actions every 30 min; the world bakes the file URLs (CPFeedBank) because VRChat can't build URLs at
 //! runtime, and *.github.io is on VRChat's string + image allowlist, so every player can load it with no setting.
 //!
-//!   yt/{CC}/{tab}.json   public YouTube tab pages per region (home, music, gaming)   booth/{tab}.json (home, new)
-//!   p/{P}.json           every page (P fixed, see `plan`): search results open their page from here
-//!   a/{P}.jpg            4×4 thumbnail atlas of page P (row 0 at the top)
+//!   yt/{CC}/{tab}.json   public YouTube tab pages per region (home, music, gaming)
+//!   booth/{tab}.json     BOOTH (home, new)          x/home.json   the posts listed in x.txt
+//!   a/{P}.jpg            4×4 thumbnail atlas of page P (row 0 at the top; page numbers fixed, see `first_page`)
 //!   v/{nnnn}.html        meta-refresh to the video of item n = P*16 + i (yt-dlp, which VRChat's player uses, follows it)
-//!   i/{nnnn}.jpg         large BOOTH picture of item n (the image loader refuses redirects, so the bytes live here)
-//!   s/yt/{CC}.json+.jpg  search catalog of a region: every item of its pages + one atlas of their thumbnails
-//!   s/booth.json+.jpg    the same for BOOTH
+//!   i/{nnnn}.jpg         large picture of item n (the image loader refuses redirects, so the bytes live here)
 //!   wx/{CC}.txt          "☀ 31°C\tBangkok": weather for the region's city (MET Norway)
 //!
 //! YouTube: the YouTube Data API when YT_API_KEY is set (most popular per region, music / gaming categories),
 //! else yt-dlp searches in the region's language sorted by this week's views. BOOTH: listing pages + item JSON.
+//! X: logged-out readers get no timeline, so the posts come from x.txt (one post link per line, newest first) and
+//! X's public embed data for single posts. Search is not here: it is a desktop-app feature.
 //! Tools on PATH: curl, ffmpeg, yt-dlp (without a key). Usage: cuteplants-feed [out dir, default "public"]
 
 mod feed_ui;
@@ -35,8 +35,6 @@ pub const PAGES: usize = 80;
 pub const REGIONS: [&str; 11] = ["US", "JP", "KR", "TW", "SG", "TH", "RU", "ES", "BR", "FR", "DE"];
 pub const YT_TABS: [&str; 3] = ["home", "music", "gaming"];
 pub const BOOTH_TABS: [&str; 2] = ["home", "new"];
-/// Pages per YouTube region: one per tab, then one more per tab (items 17–32) for the search catalog.
-const YT_PAGES: usize = 6;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Item {
@@ -51,13 +49,16 @@ pub struct Item {
     pub image: String, // what i/{n}.jpg holds
 }
 
-/// First page number of a source block: YouTube region r, or BOOTH (after every region).
-pub fn first_page(src: &str, region: usize) -> usize { if src == "yt" { region * YT_PAGES } else { REGIONS.len() * YT_PAGES } }
+/// First page number of a source block: YouTube region r (one page per tab), then BOOTH, then X.
+pub fn first_page(src: &str, region: usize) -> usize {
+    let booth = REGIONS.len() * YT_TABS.len();
+    match src { "yt" => region * YT_TABS.len(), "booth" => booth, _ => booth + BOOTH_TABS.len() }
+}
 
 fn main() {
     let out = PathBuf::from(std::env::args().nth(1).unwrap_or_else(|| "public".into()));
     let _ = fs::remove_dir_all(&out);
-    for d in ["p", "a", "v", "i", "s/yt", "wx", "booth"] { fs::create_dir_all(out.join(d)).expect("out dir"); }
+    for d in ["a", "v", "i", "wx", "booth", "x"] { fs::create_dir_all(out.join(d)).expect("out dir"); }
     for cc in REGIONS { fs::create_dir_all(out.join("yt").join(cc)).expect("out dir"); }
     let key = std::env::var("YT_API_KEY").ok().filter(|k| !k.is_empty());
 
@@ -66,13 +67,17 @@ fn main() {
             let (out, key) = (&out, key.as_deref());
             s.spawn(move || {
                 let lists: Vec<Vec<Item>> = (0..YT_TABS.len()).map(|k| youtube_list(cc, k, key).unwrap_or_else(|e| { eprintln!("yt {cc} {}: {e}", YT_TABS[k]); vec![] })).collect();
-                block(out, "yt", first_page("yt", r), &lists, &YT_TABS, &format!("yt/{cc}"), &format!("s/yt/{cc}"));
+                block(out, "yt", first_page("yt", r), &lists, &YT_TABS, &format!("yt/{cc}"));
             });
         }
         let out = &out;
         s.spawn(move || {
             let lists: Vec<Vec<Item>> = BOOTH_TABS.iter().map(|t| booth_list(t).unwrap_or_else(|e| { eprintln!("booth {t}: {e}"); vec![] })).collect();
-            block(out, "booth", first_page("booth", 0), &lists, &BOOTH_TABS, "booth", "s/booth");
+            block(out, "booth", first_page("booth", 0), &lists, &BOOTH_TABS, "booth");
+        });
+        s.spawn(move || {
+            let posts = x_list(&fs::read_to_string("x.txt").unwrap_or_default());
+            block(out, "x", first_page("x", 0), &[posts], &["home"], "x");
         });
         s.spawn(move || weather_all(out));
     });
@@ -80,23 +85,15 @@ fn main() {
     fs::write(out.join(".nojekyll"), "").ok();
 }
 
-/// One source block: tab pages (first 16 of each list), catalog pages (items 17–32), the tab files, the catalog.
-fn block(out: &Path, src: &str, p0: usize, lists: &[Vec<Item>], tabs: &[&str], tab_dir: &str, catalog: &str) {
-    let mut pages: Vec<(usize, Vec<Item>)> = Vec::new();
-    for (k, list) in lists.iter().enumerate() {
-        pages.push((p0 + k, list.iter().take(PER_PAGE).cloned().collect()));
-    }
-    for (k, list) in lists.iter().enumerate() {
-        pages.push((p0 + tabs.len() + k, list.iter().skip(PER_PAGE).take(PER_PAGE).cloned().collect()));
-    }
-    for (p, items) in &pages {
-        assert!(*p < PAGES, "page {p} past CPFeedBank.Pages");
-        page_files(out, src, *p, items);
-    }
+/// One source block: one page per tab (first 16 of its list): the tab file, its atlas, video pages and pictures.
+fn block(out: &Path, src: &str, p0: usize, lists: &[Vec<Item>], tabs: &[&str], tab_dir: &str) {
     for (k, t) in tabs.iter().enumerate() {
-        fs::write(out.join(format!("{tab_dir}/{t}.json")), page_json(src, pages[k].0, &pages[k].1)).ok();
+        let p = p0 + k;
+        assert!(p < PAGES, "page {p} past CPFeedBank.Pages");
+        let items: Vec<Item> = lists[k].iter().take(PER_PAGE).cloned().collect();
+        page_files(out, src, p, &items);
+        fs::write(out.join(format!("{tab_dir}/{t}.json")), page_json(src, p, &items)).ok();
     }
-    catalog_files(out, src, &pages, catalog);
 }
 
 /// Page JSON the world parses with VRCJson: items + the page's screens built with the app SDK (`ui`).
@@ -111,7 +108,6 @@ pub fn page_json(src: &str, page: usize, items: &[Item]) -> String {
 fn kind(i: &Item) -> &'static str { if !i.video.is_empty() { "v" } else if !i.image.is_empty() { "i" } else { "" } }
 
 fn page_files(out: &Path, src: &str, p: usize, items: &[Item]) {
-    fs::write(out.join(format!("p/{p}.json")), page_json(src, p, items)).ok();
     let cell = if src == "yt" { (320, 180) } else { (256, 256) };
     let thumbs: Vec<String> = items.iter().map(|i| i.thumb.clone()).collect();
     if let Err(e) = atlas(&thumbs, cell, &out.join(format!("a/{p}.jpg"))) { eprintln!("atlas {p}: {e}"); }
@@ -128,38 +124,6 @@ fn page_files(out: &Path, src: &str, p: usize, items: &[Item]) {
 pub fn redirect_html(url: &str) -> String {
     let u = url.replace('&', "&amp;").replace('"', "&quot;").replace('<', "");
     format!("<!doctype html><meta charset=utf-8><meta http-equiv=\"refresh\" content=\"0; url={u}\"><link rel=canonical href=\"{u}\">\n")
-}
-
-/// Search catalog: one entry per item (title, channel / shop, page, index, cell in the catalog atlas) and an atlas
-/// that tiles the pages' atlases at half size (pages in a row of `tiles` across). The world filters it locally.
-fn catalog_files(out: &Path, src: &str, pages: &[(usize, Vec<Item>)], name: &str) {
-    let tiles = if src == "yt" { 3 } else { 2 };
-    let cols = tiles * 4;
-    let rows = pages.len().div_ceil(tiles) * 4;
-    let mut items = Vec::new();
-    for (k, (p, list)) in pages.iter().enumerate() {
-        for (i, it) in list.iter().enumerate() {
-            let cell = ((k / tiles) * 4 + i / 4) * cols + (k % tiles) * 4 + i % 4;
-            items.push(json!({ "t": it.title, "by": it.by, "m": catalog_meta(src, it), "p": p, "i": i, "c": cell, "b": if it.live { String::new() } else { feed_ui::length(it.dur) } }));
-        }
-    }
-    fs::write(out.join(format!("{name}.json")), json!({ "cols": cols, "rows": rows, "items": items }).to_string()).ok();
-    let atlases: Vec<PathBuf> = pages.iter().map(|(p, _)| out.join(format!("a/{p}.jpg"))).collect();
-    let (w, h) = if src == "yt" { (640, 360) } else { (512, 512) };
-    if let Err(e) = tile(&atlases, tiles, (w, h), &out.join(format!("{name}.jpg"))) { eprintln!("catalog atlas {name}: {e}"); }
-}
-
-/// The result row's second line, already in the world's label format (untrusted text made inert).
-fn catalog_meta(src: &str, it: &Item) -> String {
-    use crate::ui::literal;
-    if src == "booth" {
-        let wish = if it.views >= 0 { format!("  ♡ {}", feed_ui::compact_num(it.views)) } else { String::new() };
-        return format!("<b>{}</b>{wish}", literal(&it.price));
-    }
-    let by = literal(&it.by);
-    let sep = if by.is_empty() { "" } else { " · " };
-    if it.live { return format!("{by}{sep}● {{@feed.live}}"); }
-    if it.views >= 0 { format!("{by}{sep}{{@feed.views|{}}}", feed_ui::compact_num(it.views)) } else { by }
 }
 
 // ---------- sources ----------
@@ -317,6 +281,73 @@ fn booth_list(tab: &str) -> Result<Vec<Item>, String> {
     Ok(items)
 }
 
+// ---------- X (posts listed in x.txt) ----------
+
+/// Post ids from x.txt: a post link (x.com/…/status/123) or a bare id per line; `#` lines are comments. At most 16.
+pub fn x_ids(txt: &str) -> Vec<String> {
+    let mut ids: Vec<String> = Vec::new();
+    for line in txt.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')) {
+        let tail = line.split("/status/").nth(1).unwrap_or(line);
+        let id: String = tail.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if (5..=20).contains(&id.len()) && !ids.contains(&id) { ids.push(id); }
+    }
+    ids.truncate(PER_PAGE);
+    ids
+}
+
+/// The token X's embed endpoint wants: (id / 1e15 × π) in base 36 without zeros and the point.
+pub fn x_token(id: &str) -> String {
+    const D: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let x = id.parse::<f64>().unwrap_or(0.0) / 1e15 * std::f64::consts::PI;
+    let (mut ip, mut fp) = (x.trunc() as u64, x.fract());
+    let mut s = String::new();
+    while ip > 0 { s.insert(0, D[(ip % 36) as usize] as char); ip /= 36; }
+    for _ in 0..12 { fp *= 36.0; let d = fp.trunc() as usize; s.push(D[d.min(35)] as char); fp -= d as f64; }
+    s.replace('0', "")
+}
+
+fn x_list(txt: &str) -> Vec<Item> {
+    std::thread::scope(|s| {
+        let jobs: Vec<_> = x_ids(txt).into_iter().map(|id| s.spawn(move || {
+            let url = format!("https://cdn.syndication.twimg.com/tweet-result?id={id}&token={}&lang=en", x_token(&id));
+            match curl(&url).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()).and_then(|v| parse_x(&v)) {
+                Some(it) => Some(it),
+                None => { eprintln!("x {id}: unreadable (deleted or private?)"); None }
+            }
+        })).collect();
+        jobs.into_iter().filter_map(|j| j.join().ok().flatten()).collect()
+    })
+}
+
+/// One post from X's embed data: name, text (without the trailing t.co links), first photo, video flag.
+/// Only pbs.twimg.com pictures are kept; a video post plays through x.com (yt-dlp resolves it).
+pub fn parse_x(v: &Value) -> Option<Item> {
+    let id = v["id_str"].as_str()?;
+    if !id.bytes().all(|b| b.is_ascii_digit()) { return None; }
+    let user = &v["user"];
+    let screen = user["screen_name"].as_str()?;
+    if !screen.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') { return None; }
+    let mut text = v["text"].as_str().unwrap_or("").trim().to_owned();
+    while let Some(i) = text.rfind("https://t.co/") {
+        if text[i..].contains(char::is_whitespace) { break; }
+        text = text[..i].trim_end().to_owned();
+    }
+    let pbs = |u: &str| u.starts_with("https://pbs.twimg.com/").then(|| u.to_owned());
+    let media = &v["mediaDetails"][0];
+    let photo = media["media_url_https"].as_str().and_then(pbs);
+    let avatar = user["profile_image_url_https"].as_str().and_then(pbs).map(|u| u.replace("_normal.", "_400x400."));
+    let video = matches!(media["type"].as_str(), Some("video") | Some("animated_gif"));
+    Some(Item {
+        title: text.chars().take(400).collect(),
+        by: user["name"].as_str().unwrap_or(screen).chars().take(80).collect(),
+        views: -1,
+        thumb: photo.as_ref().map(|p| format!("{p}?name=small")).or(avatar).unwrap_or_default(),
+        video: if video { format!("https://x.com/{screen}/status/{id}") } else { String::new() },
+        image: if video { String::new() } else { photo.map(|p| format!("{p}?name=medium")).unwrap_or_default() },
+        ..Default::default()
+    })
+}
+
 // ---------- images ----------
 
 /// 4×4 atlas of thumbnails (cell w×h, row 0 at the top) as JPEG. Missing thumbnails stay dark.
@@ -351,26 +382,6 @@ fn atlas(thumbs: &[String], (w, h): (u32, u32), file: &Path) -> Result<(), Strin
     let r = run("ffmpeg", &refs).map(|_| ());
     let _ = fs::remove_dir_all(&dir);
     r
-}
-
-/// Tiles page atlases (`tiles` across, each scaled to w×h) into one catalog atlas. Missing pages stay dark.
-fn tile(atlases: &[PathBuf], tiles: usize, (w, h): (u32, u32), file: &Path) -> Result<(), String> {
-    let n = atlases.len().div_ceil(tiles) * tiles;
-    let mut args: Vec<String> = vec!["-hide_banner".into(), "-loglevel".into(), "error".into(), "-y".into()];
-    let mut filter = String::new();
-    for k in 0..n {
-        match atlases.get(k).filter(|f| f.exists()) {
-            Some(f) => args.extend(["-i".into(), f.to_string_lossy().into_owned()]),
-            None => args.extend(["-f".into(), "lavfi".into(), "-i".into(), format!("color=c=0x22262b:s={w}x{h}:d=1")]),
-        }
-        filter += &format!("[{k}:v]scale={w}:{h},setsar=1,format=yuvj420p[t{k}];");
-    }
-    for k in 0..n { filter += &format!("[t{k}]"); }
-    let layout: Vec<String> = (0..n).map(|k| format!("{}_{}", (k % tiles) as u32 * w, (k / tiles) as u32 * h)).collect();
-    filter += &format!("xstack=inputs={n}:layout={}", layout.join("|"));
-    args.extend(["-filter_complex".into(), filter, "-frames:v".into(), "1".into(), "-q:v".into(), "4".into(), file.to_string_lossy().into_owned()]);
-    let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    run("ffmpeg", &refs).map(|_| ())
 }
 
 // ---------- weather ----------
@@ -430,10 +441,10 @@ mod tests {
     #[test]
     fn page_plan_fits() {
         assert_eq!(first_page("yt", 0), 0);
-        assert_eq!(first_page("yt", 10), 60);
-        let booth = first_page("booth", 0);
-        assert_eq!(booth, 66);
-        assert!(booth + 2 * BOOTH_TABS.len() <= PAGES);
+        assert_eq!(first_page("yt", 10), 30);
+        assert_eq!(first_page("booth", 0), 33);
+        assert_eq!(first_page("x", 0), 35);
+        assert!(first_page("x", 0) < PAGES);
     }
 
     #[test]
@@ -460,9 +471,23 @@ mod tests {
     }
 
     #[test]
-    fn catalog_meta_is_inert() {
-        let it = Item { by: "{@x}<b>".into(), views: 1500, ..Default::default() };
-        assert_eq!(catalog_meta("yt", &it), "{\u{200B}@x}<\u{200B}b> · {@feed.views|1.5K}");
+    fn x_posts() {
+        assert_eq!(x_ids("# mine\nhttps://x.com/LogicCuteGuy/status/1234567890?s=20\n1234567890\n42\n  987654321  "), vec!["1234567890", "987654321"]);
+        assert_eq!((x_token("20").as_str(), x_token("1585341984679469056").as_str()), ("6dq1", "3uchycv2wqcdgex"));
+        let v = json!({"id_str":"123456","text":"hello world https://t.co/abc","user":{"name":"Cute","screen_name":"Logic_1",
+            "profile_image_url_https":"https://pbs.twimg.com/profile_images/1/a_normal.jpg"},
+            "mediaDetails":[{"type":"photo","media_url_https":"https://pbs.twimg.com/media/X.jpg"}]});
+        let it = parse_x(&v).unwrap();
+        assert_eq!((it.title.as_str(), it.by.as_str()), ("hello world", "Cute"));
+        assert_eq!(it.image, "https://pbs.twimg.com/media/X.jpg?name=medium");
+        assert!(it.video.is_empty());
+        let mut vid = v.clone();
+        vid["mediaDetails"][0]["type"] = json!("video");
+        assert_eq!(parse_x(&vid).unwrap().video, "https://x.com/Logic_1/status/123456");
+        let mut bad = v.clone();
+        bad["mediaDetails"][0]["media_url_https"] = json!("https://evil.example/x.jpg");
+        let b = parse_x(&bad).unwrap();
+        assert!(b.image.is_empty() && b.thumb.starts_with("https://pbs.twimg.com/profile_images/"));
     }
 
     #[test]
