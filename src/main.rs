@@ -1,4 +1,4 @@
-//! cp-feed: builds the CutePlants public feed as static files for GitHub Pages (no server of our own).
+//! cuteplants-feed: builds the CutePlants public feed as static files for GitHub Pages (no server of our own).
 //! Run by GitHub Actions every 30 min; the world bakes the file URLs (CPFeedBank) because VRChat can't build URLs at
 //! runtime, and *.github.io is on VRChat's string + image allowlist, so every player can load it with no setting.
 //!
@@ -13,9 +13,11 @@
 //!
 //! YouTube: the YouTube Data API when YT_API_KEY is set (most popular per region, music / gaming categories),
 //! else yt-dlp searches in the region's language sorted by this week's views. BOOTH: listing pages + item JSON.
-//! Tools on PATH: curl, ffmpeg, yt-dlp (without a key). Usage: cp-feed [out dir, default "public"]
+//! Tools on PATH: curl, ffmpeg, yt-dlp (without a key). Usage: cuteplants-feed [out dir, default "public"]
 
 mod feed_ui;
+#[allow(dead_code)] // a copy of the whole SDK builder; the feed uses part of it
+mod ui;
 
 use std::{
     fs,
@@ -149,7 +151,7 @@ fn catalog_files(out: &Path, src: &str, pages: &[(usize, Vec<Item>)], name: &str
 
 /// The result row's second line, already in the world's label format (untrusted text made inert).
 fn catalog_meta(src: &str, it: &Item) -> String {
-    use cuteplants_sdk::ui::literal;
+    use crate::ui::literal;
     if src == "booth" {
         let wish = if it.views >= 0 { format!("  ♡ {}", feed_ui::compact_num(it.views)) } else { String::new() };
         return format!("<b>{}</b>{wish}", literal(&it.price));
@@ -319,7 +321,7 @@ fn booth_list(tab: &str) -> Result<Vec<Item>, String> {
 
 /// 4×4 atlas of thumbnails (cell w×h, row 0 at the top) as JPEG. Missing thumbnails stay dark.
 fn atlas(thumbs: &[String], (w, h): (u32, u32), file: &Path) -> Result<(), String> {
-    let dir = std::env::temp_dir().join(format!("cp-feed-{}", file.file_stem().and_then(|s| s.to_str()).unwrap_or("x")));
+    let dir = std::env::temp_dir().join(format!("cuteplants-feed-{}", file.file_stem().and_then(|s| s.to_str()).unwrap_or("x")));
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let got: Vec<Option<PathBuf>> = std::thread::scope(|s| {
         let jobs: Vec<_> = (0..PER_PAGE).map(|k| {
@@ -391,7 +393,7 @@ pub fn region_city(cc: &str) -> (f64, f64, &'static str) {
 }
 
 fn weather_all(out: &Path) {
-    let ua = format!("cp-feed/0.1 CutePlants ({})", std::env::var("CP_CONTACT").unwrap_or_else(|_| "github.com/logiccuteguy/cuteplants-feed".into()));
+    let ua = format!("cuteplants-feed/0.1 CutePlants ({})", std::env::var("CP_CONTACT").unwrap_or_else(|_| "github.com/logiccuteguy/cuteplants-feed".into()));
     for cc in REGIONS {
         let (lat, lon, city) = region_city(cc);
         let url = format!("https://api.met.no/weatherapi/locationforecast/2.0/compact?lat={lat:.2}&lon={lon:.2}");

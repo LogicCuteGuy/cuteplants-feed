@@ -1,11 +1,11 @@
-//! Feed screens built with the app SDK (`cuteplants_sdk::ui`): the world draws them with its own widgets and labels.
+//! Feed screens built with the app SDK (`ui.rs`): the world draws them with its own widgets and labels.
 //! Responsive: each page carries one layout per design width in `WIDTHS` (u = short side / 48, so a portrait phone or
 //! a watch is 48 wide, 4:3 about 64, 16:9 about 85, ultra-wide about 112). Column counts and the detail arrangement
 //! come from the width; the world picks the widest layout that fits and stretches it the last few units.
 //! Each layout is a list view plus one detail view per item. Tap actions: `v:k` open view k, `b` back to the list,
 //! `p:n` play item n's video, `o:n` open item n's image (n = index on this page).
 
-use cuteplants_sdk::ui::*;
+use crate::ui::*;
 use serde_json::{json, Map, Value};
 
 use crate::Item;

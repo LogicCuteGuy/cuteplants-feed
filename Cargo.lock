@@ -3,15 +3,7 @@
 version = 4
 
 [[package]]
-name = "cp-feed"
-version = "0.1.0"
-dependencies = [
- "cuteplants-sdk",
- "serde_json",
-]
-
-[[package]]
-name = "cuteplants-sdk"
+name = "cuteplants-feed"
 version = "0.1.0"
 dependencies = [
  "serde_json",

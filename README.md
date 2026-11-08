@@ -1,4 +1,4 @@
-# CutePlants feed
+# cuteplants-feed
 
 Static data for the CutePlants device OS in VRChat worlds: the public YouTube, BOOTH and weather feeds, rebuilt every
 30 minutes by GitHub Actions and served from GitHub Pages (`https://<owner>.github.io/cuteplants-feed/`). No server.
@@ -11,7 +11,8 @@ The X tab isn't here: X shows nothing to logged-out readers, so X stays a deskto
 
 ## Run locally
 
-Needs Rust, `curl`, `ffmpeg` and `yt-dlp` on PATH, and the Shared repo checked out next to this one (`../Shared`).
+Needs Rust, `curl`, `ffmpeg` and `yt-dlp` on PATH. Self-contained: `src/ui.rs` is this repo's copy of the CutePlants
+widget builder (the command format the world's `CPDevice.DrawUi` reads).
 
 ```bash
 cargo test
@@ -22,9 +23,9 @@ Set `YT_API_KEY` (YouTube Data API v3, free 10k units/day; a run uses 33) for re
 
 ## Publish
 
-1. Create the public repo `cuteplants-feed` and push this repo to `main`; push Shared as `cuteplants-shared`.
+1. Push this repo to the public GitHub repo `cuteplants-feed` (`main`).
 2. Settings → Pages → Source: GitHub Actions.
-3. Optional secrets: `YT_API_KEY`, and `SHARED_TOKEN` if Shared is private.
+3. Optional secret: `YT_API_KEY`.
 4. In the world: `logiccuteguy.github.io` in the Video Player Allowed Domains (the `v/` pages hand the player on to YouTube).
 
 Weather: MET Norway Locationforecast (CC BY 4.0).
