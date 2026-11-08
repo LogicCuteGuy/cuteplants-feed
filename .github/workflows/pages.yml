@@ -1,0 +1,36 @@
+# Rebuilds the public feed every 30 minutes and publishes it to GitHub Pages.
+# Repo settings: Pages → Source "GitHub Actions". Optional secrets: YT_API_KEY (YouTube Data API v3, better charts),
+# SHARED_TOKEN (read access to the Shared repo when it is private).
+name: feed
+on:
+  schedule: [{ cron: "*/30 * * * *" }]
+  workflow_dispatch:
+  push: { branches: [main] }
+permissions: { contents: read, pages: write, id-token: write }
+concurrency: { group: pages, cancel-in-progress: true }
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: Feed }
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/cuteplants-shared
+          token: ${{ secrets.SHARED_TOKEN || github.token }}
+          path: Shared
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg && pipx install yt-dlp
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: Feed }
+      - run: cargo run --release -- public
+        working-directory: Feed
+        env: { YT_API_KEY: "${{ secrets.YT_API_KEY }}" }
+      - uses: actions/upload-pages-artifact@v3
+        with: { path: Feed/public }
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: { name: github-pages, url: "${{ steps.d.outputs.page_url }}" }
+    steps:
+      - id: d
+        uses: actions/deploy-pages@v4
