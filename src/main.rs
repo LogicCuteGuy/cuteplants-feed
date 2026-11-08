@@ -200,7 +200,9 @@ fn youtube_list(cc: &str, k: usize, key: Option<&str>) -> Result<Vec<Item>, Stri
     }
     let (hl, words) = region_words(cc);
     let url = format!("https://www.youtube.com/results?search_query={}&gl={cc}&hl={hl}&sp=CAMSAggD", enc(words[k]));
-    let out = run("yt-dlp", &["--flat-playlist", "-J", "--no-warnings", "--playlist-items", "1-44", &url])?;
+    // titles in the region's language (else YouTube serves machine translations into English)
+    let lang = format!("youtube:lang={hl}");
+    let out = run("yt-dlp", &["--flat-playlist", "-J", "--no-warnings", "--playlist-items", "1-44", "--extractor-args", &lang, &url])?;
     Ok(parse_ytdlp(&serde_json::from_slice(&out).map_err(|e| e.to_string())?))
 }
 
