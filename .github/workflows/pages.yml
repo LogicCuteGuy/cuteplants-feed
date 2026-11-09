@@ -15,7 +15,7 @@ jobs:
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg && pipx install yt-dlp
       - uses: Swatinem/rust-cache@v2
       - run: cargo run --release -- public
-        env: { YT_API_KEY: "${{ secrets.YT_API_KEY }}" }
+        env: { YT_API_KEY: "${{ secrets.YT_API_KEY }}", X_USER: "${{ vars.X_USER }}" }
       - uses: actions/upload-pages-artifact@v3
         with: { path: public }
   deploy:

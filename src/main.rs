@@ -3,7 +3,7 @@
 //! runtime, and *.github.io is on VRChat's string + image allowlist, so every player can load it with no setting.
 //!
 //!   yt/{CC}/{tab}.json   public YouTube tab pages per region (home, music, gaming)
-//!   booth/{tab}.json     BOOTH (home, new)          x/home.json   the posts listed in x.txt
+//!   booth/{tab}.json     BOOTH (home, new)          x/home.json   the X account's timeline
 //!   a/{P}.jpg            4×4 thumbnail atlas of page P (row 0 at the top; page numbers fixed, see `first_page`)
 //!   v/{nnnn}.html        meta-refresh to the video of item n = P*16 + i (yt-dlp, which VRChat's player uses, follows it)
 //!   i/{nnnn}.jpg         large picture of item n (the image loader refuses redirects, so the bytes live here)
@@ -11,8 +11,8 @@
 //!
 //! YouTube: the YouTube Data API when YT_API_KEY is set (most popular per region, music / gaming categories),
 //! else yt-dlp searches in the region's language sorted by this week's views. BOOTH: listing pages + item JSON.
-//! X: logged-out readers get no timeline, so the posts come from x.txt (one post link per line, newest first) and
-//! X's public embed data for single posts. Search is not here: it is a desktop-app feature.
+//! X: the timeline of X_USER (default LogicCuteGuy) through FxTwitter's public API (api.fxtwitter.com; X itself shows
+//! nothing to logged-out readers): posts and reposts, no replies, nothing marked sensitive. Search is not here: it is a desktop-app feature.
 //! Tools on PATH: curl, ffmpeg, yt-dlp (without a key). Usage: cuteplants-feed [out dir, default "public"]
 
 mod feed_ui;
@@ -76,7 +76,8 @@ fn main() {
             block(out, "booth", first_page("booth", 0), &lists, &BOOTH_TABS, "booth");
         });
         s.spawn(move || {
-            let posts = x_list(&fs::read_to_string("x.txt").unwrap_or_default());
+            let user = std::env::var("X_USER").ok().filter(|u| !u.is_empty()).unwrap_or_else(|| "LogicCuteGuy".into());
+            let posts = x_list(&user).unwrap_or_else(|e| { eprintln!("x {user}: {e}"); vec![] });
             block(out, "x", first_page("x", 0), &[posts], &["home"], "x");
         });
         s.spawn(move || weather_all(out));
@@ -281,69 +282,38 @@ fn booth_list(tab: &str) -> Result<Vec<Item>, String> {
     Ok(items)
 }
 
-// ---------- X (posts listed in x.txt) ----------
+// ---------- X (an account's timeline through FxTwitter) ----------
 
-/// Post ids from x.txt: a post link (x.com/…/status/123) or a bare id per line; `#` lines are comments. At most 16.
-pub fn x_ids(txt: &str) -> Vec<String> {
-    let mut ids: Vec<String> = Vec::new();
-    for line in txt.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')) {
-        let tail = line.split("/status/").nth(1).unwrap_or(line);
-        let id: String = tail.chars().take_while(|c| c.is_ascii_digit()).collect();
-        if (5..=20).contains(&id.len()) && !ids.contains(&id) { ids.push(id); }
-    }
-    ids.truncate(PER_PAGE);
-    ids
+fn x_list(user: &str) -> Result<Vec<Item>, String> {
+    if user.is_empty() || !user.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') { return Err("bad user name".into()); }
+    let url = format!("https://api.fxtwitter.com/2/profile/{user}/statuses");
+    let body = run("curl", &["-sSfL", "--max-time", "20", "--retry", "2", "-A", "cuteplants-feed/0.1 (+https://github.com/LogicCuteGuy/cuteplants-feed)", &url])?;
+    let v: Value = serde_json::from_slice(&body).map_err(|e| e.to_string())?;
+    Ok(v["results"].as_array().into_iter().flatten().filter_map(parse_x).take(PER_PAGE).collect())
 }
 
-/// The token X's embed endpoint wants: (id / 1e15 × π) in base 36 without zeros and the point.
-pub fn x_token(id: &str) -> String {
-    const D: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
-    let x = id.parse::<f64>().unwrap_or(0.0) / 1e15 * std::f64::consts::PI;
-    let (mut ip, mut fp) = (x.trunc() as u64, x.fract());
-    let mut s = String::new();
-    while ip > 0 { s.insert(0, D[(ip % 36) as usize] as char); ip /= 36; }
-    for _ in 0..12 { fp *= 36.0; let d = fp.trunc() as usize; s.push(D[d.min(35)] as char); fp -= d as f64; }
-    s.replace('0', "")
-}
-
-fn x_list(txt: &str) -> Vec<Item> {
-    std::thread::scope(|s| {
-        let jobs: Vec<_> = x_ids(txt).into_iter().map(|id| s.spawn(move || {
-            let url = format!("https://cdn.syndication.twimg.com/tweet-result?id={id}&token={}&lang=en", x_token(&id));
-            match curl(&url).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()).and_then(|v| parse_x(&v)) {
-                Some(it) => Some(it),
-                None => { eprintln!("x {id}: unreadable (deleted or private?)"); None }
-            }
-        })).collect();
-        jobs.into_iter().filter_map(|j| j.join().ok().flatten()).collect()
-    })
-}
-
-/// One post from X's embed data: name, text (without the trailing t.co links), first photo, video flag.
+/// One timeline entry: author name, text, first photo / video. Replies and posts marked sensitive are skipped.
 /// Only pbs.twimg.com pictures are kept; a video post plays through x.com (yt-dlp resolves it).
 pub fn parse_x(v: &Value) -> Option<Item> {
-    let id = v["id_str"].as_str()?;
+    if v["type"].as_str() != Some("status") || !v["replying_to"].is_null() || v["possibly_sensitive"].as_bool() == Some(true) { return None; }
+    let id = v["id"].as_str()?;
     if !id.bytes().all(|b| b.is_ascii_digit()) { return None; }
-    let user = &v["user"];
-    let screen = user["screen_name"].as_str()?;
+    let author = &v["author"];
+    let screen = author["screen_name"].as_str()?;
     if !screen.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') { return None; }
-    let mut text = v["text"].as_str().unwrap_or("").trim().to_owned();
-    while let Some(i) = text.rfind("https://t.co/") {
-        if text[i..].contains(char::is_whitespace) { break; }
-        text = text[..i].trim_end().to_owned();
-    }
-    let pbs = |u: &str| u.starts_with("https://pbs.twimg.com/").then(|| u.to_owned());
-    let media = &v["mediaDetails"][0];
-    let photo = media["media_url_https"].as_str().and_then(pbs);
-    let avatar = user["profile_image_url_https"].as_str().and_then(pbs).map(|u| u.replace("_normal.", "_400x400."));
-    let video = matches!(media["type"].as_str(), Some("video") | Some("animated_gif"));
+    let pbs = |u: &str| u.starts_with("https://pbs.twimg.com/").then(|| u.split('?').next().unwrap_or(u).to_owned());
+    let media = &v["media"]["all"][0];
+    let video = matches!(media["type"].as_str(), Some("video") | Some("gif"));
+    let photo = if video { None } else { media["url"].as_str().and_then(pbs) };
+    let picture = photo.clone().or_else(|| media["thumbnail_url"].as_str().and_then(pbs));
+    let avatar = author["avatar_url"].as_str().and_then(pbs).map(|u| u.replace("_normal.", "_400x400."));
     Some(Item {
-        title: text.chars().take(400).collect(),
-        by: user["name"].as_str().unwrap_or(screen).chars().take(80).collect(),
+        title: v["text"].as_str().unwrap_or("").trim().chars().take(400).collect(),
+        by: author["name"].as_str().unwrap_or(screen).chars().take(80).collect(),
         views: -1,
-        thumb: photo.as_ref().map(|p| format!("{p}?name=small")).or(avatar).unwrap_or_default(),
+        thumb: picture.map(|p| format!("{p}?name=small")).or(avatar).unwrap_or_default(),
         video: if video { format!("https://x.com/{screen}/status/{id}") } else { String::new() },
-        image: if video { String::new() } else { photo.map(|p| format!("{p}?name=medium")).unwrap_or_default() },
+        image: photo.map(|p| format!("{p}?name=medium")).unwrap_or_default(),
         ..Default::default()
     })
 }
@@ -472,22 +442,28 @@ mod tests {
 
     #[test]
     fn x_posts() {
-        assert_eq!(x_ids("# mine\nhttps://x.com/LogicCuteGuy/status/1234567890?s=20\n1234567890\n42\n  987654321  "), vec!["1234567890", "987654321"]);
-        assert_eq!((x_token("20").as_str(), x_token("1585341984679469056").as_str()), ("6dq1", "3uchycv2wqcdgex"));
-        let v = json!({"id_str":"123456","text":"hello world https://t.co/abc","user":{"name":"Cute","screen_name":"Logic_1",
-            "profile_image_url_https":"https://pbs.twimg.com/profile_images/1/a_normal.jpg"},
-            "mediaDetails":[{"type":"photo","media_url_https":"https://pbs.twimg.com/media/X.jpg"}]});
-        let it = parse_x(&v).unwrap();
+        let post = json!({"type":"status","id":"123456","text":"hello world","replying_to":null,"possibly_sensitive":false,
+            "author":{"name":"Cute","screen_name":"Logic_1","avatar_url":"https://pbs.twimg.com/profile_images/1/a_normal.jpg"},
+            "media":{"all":[{"type":"photo","url":"https://pbs.twimg.com/media/X.jpg?name=orig"}]}});
+        let it = parse_x(&post).unwrap();
         assert_eq!((it.title.as_str(), it.by.as_str()), ("hello world", "Cute"));
-        assert_eq!(it.image, "https://pbs.twimg.com/media/X.jpg?name=medium");
+        assert_eq!((it.image.as_str(), it.thumb.as_str()), ("https://pbs.twimg.com/media/X.jpg?name=medium", "https://pbs.twimg.com/media/X.jpg?name=small"));
         assert!(it.video.is_empty());
-        let mut vid = v.clone();
-        vid["mediaDetails"][0]["type"] = json!("video");
-        assert_eq!(parse_x(&vid).unwrap().video, "https://x.com/Logic_1/status/123456");
-        let mut bad = v.clone();
-        bad["mediaDetails"][0]["media_url_https"] = json!("https://evil.example/x.jpg");
+        let mut vid = post.clone();
+        vid["media"]["all"][0] = json!({"type":"video","url":"https://video.twimg.com/v.mp4","thumbnail_url":"https://pbs.twimg.com/amplify_video_thumb/1/img/t.jpg"});
+        let v = parse_x(&vid).unwrap();
+        assert_eq!(v.video, "https://x.com/Logic_1/status/123456");
+        assert!(v.image.is_empty() && v.thumb.starts_with("https://pbs.twimg.com/amplify_video_thumb/"));
+        let mut bad = post.clone();
+        bad["media"]["all"][0]["url"] = json!("https://evil.example/x.jpg");
         let b = parse_x(&bad).unwrap();
         assert!(b.image.is_empty() && b.thumb.starts_with("https://pbs.twimg.com/profile_images/"));
+        let mut reply = post.clone();
+        reply["replying_to"] = json!({"screen_name":"a"});
+        assert!(parse_x(&reply).is_none());
+        let mut nsfw = post.clone();
+        nsfw["possibly_sensitive"] = json!(true);
+        assert!(parse_x(&nsfw).is_none());
     }
 
     #[test]

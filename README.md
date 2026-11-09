@@ -7,8 +7,8 @@ Static data for the CutePlants device OS in VRChat worlds: the public YouTube, B
 The world bakes every file URL (VRChat can't build URLs at runtime), so the file layout is a contract with
 `CPFeedBank` / `CPFeedBankEditor` in the Unity project. It's described at the top of `src/main.rs`.
 
-**X:** X shows no timeline to logged-out readers, so the X app shows the posts listed in [`x.txt`](x.txt): paste a post
-link per line (newest first, up to 16) and commit; the next run (within 30 min) picks them up.
+**X:** the timeline of `@LogicCuteGuy` (posts and reposts, no replies, nothing marked sensitive) through FxTwitter's
+public API, since X itself shows nothing to logged-out readers. Another account: set the `X_USER` env var (or repo variable).
 
 There is no search: static hosting can't answer arbitrary queries, so search is a desktop-app feature.
 
