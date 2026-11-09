@@ -31,4 +31,6 @@ Set `YT_API_KEY` (YouTube Data API v3, free 10k units/day; a run uses 33) for re
 3. Optional secret: `YT_API_KEY`.
 4. In the world: `logiccuteguy.github.io` in the Video Player Allowed Domains (the `v/` pages hand the player on to YouTube).
 
-Weather: MET Norway Locationforecast (CC BY 4.0).
+**Weather:** one city per region from [Open-Meteo](https://open-meteo.com/) (no key; data CC BY 4.0, credited on the
+screen and in `index.html`): `wx/{CC}.txt` is the home-screen line, `wx/{CC}.json` the Weather app's screens
+(now, next 24 hours, 7 days; `src/weather.rs`).

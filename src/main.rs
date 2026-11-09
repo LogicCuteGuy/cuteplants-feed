@@ -7,7 +7,8 @@
 //!   a/{P}.jpg            4×4 thumbnail atlas of page P (row 0 at the top; page numbers fixed, see `first_page`)
 //!   v/{nnnn}.html        meta-refresh to the video of item n = P*16 + i (yt-dlp, which VRChat's player uses, follows it)
 //!   i/{nnnn}.jpg         large picture of item n (the image loader refuses redirects, so the bytes live here)
-//!   wx/{CC}.txt          "☀ 31°C\tBangkok": weather for the region's city (MET Norway)
+//!   wx/{CC}.txt          "☀ 31°C\tBangkok": home-screen weather for the region's city (Open-Meteo)
+//!   wx/{CC}.json         the Weather app's screens for that city (now, next 24 h, 7 days)
 //!
 //! YouTube: the YouTube Data API when YT_API_KEY is set (most popular per region, music / gaming categories),
 //! else yt-dlp searches in the region's language sorted by this week's views. BOOTH: listing pages + item JSON.
@@ -16,6 +17,7 @@
 //! Tools on PATH: curl, ffmpeg, yt-dlp (without a key). Usage: cuteplants-feed [out dir, default "public"]
 
 mod feed_ui;
+mod weather;
 #[allow(dead_code)] // a copy of the whole SDK builder; the feed uses part of it
 mod ui;
 
@@ -80,9 +82,9 @@ fn main() {
             let posts = x_list(&user).unwrap_or_else(|e| { eprintln!("x {user}: {e}"); vec![] });
             block(out, "x", first_page("x", 0), &[posts], &["home"], "x");
         });
-        s.spawn(move || weather_all(out));
+        s.spawn(move || weather::weather_all(out));
     });
-    fs::write(out.join("index.html"), "<!doctype html><meta charset=utf-8><title>CutePlants feed</title><p>Data for the CutePlants device OS in VRChat worlds. Weather: MET Norway (CC BY 4.0).\n").ok();
+    fs::write(out.join("index.html"), "<!doctype html><meta charset=utf-8><title>CutePlants feed</title><p>Data for the CutePlants device OS in VRChat worlds. Weather data by <a href=https://open-meteo.com/>Open-Meteo.com</a> (CC BY 4.0).\n").ok();
     fs::write(out.join(".nojekyll"), "").ok();
 }
 
@@ -354,56 +356,6 @@ fn atlas(thumbs: &[String], (w, h): (u32, u32), file: &Path) -> Result<(), Strin
     r
 }
 
-// ---------- weather ----------
-
-/// The city whose weather a region's players see (lat, lon, name).
-pub fn region_city(cc: &str) -> (f64, f64, &'static str) {
-    match cc {
-        "JP" => (35.68, 139.69, "Tokyo"),
-        "KR" => (37.57, 126.98, "Seoul"),
-        "TW" => (25.03, 121.57, "Taipei"),
-        "SG" => (1.29, 103.85, "Singapore"),
-        "TH" => (13.75, 100.50, "Bangkok"),
-        "RU" => (55.76, 37.62, "Moscow"),
-        "ES" => (40.42, -3.70, "Madrid"),
-        "BR" => (-23.55, -46.63, "São Paulo"),
-        "FR" => (48.86, 2.35, "Paris"),
-        "DE" => (52.52, 13.40, "Berlin"),
-        _ => (40.71, -74.01, "New York"),
-    }
-}
-
-fn weather_all(out: &Path) {
-    let ua = format!("cuteplants-feed/0.1 CutePlants ({})", std::env::var("CP_CONTACT").unwrap_or_else(|_| "github.com/logiccuteguy/cuteplants-feed".into()));
-    for cc in REGIONS {
-        let (lat, lon, city) = region_city(cc);
-        let url = format!("https://api.met.no/weatherapi/locationforecast/2.0/compact?lat={lat:.2}&lon={lon:.2}");
-        let got = run("curl", &["-sSfL", "--max-time", "15", "-A", &ua, &url]).and_then(|b| serde_json::from_slice::<Value>(&b).map_err(|e| e.to_string()));
-        match got.ok().and_then(|j| weather_line(&j, cc == "US")) {
-            Some(now) => { fs::write(out.join(format!("wx/{cc}.txt")), format!("{now}\t{city}")).ok(); }
-            None => eprintln!("weather {cc}: no forecast"),
-        }
-    }
-}
-
-/// "☀ 31°C" from a Locationforecast compact document (the first time step).
-pub fn weather_line(json: &Value, fahrenheit: bool) -> Option<String> {
-    let d = &json["properties"]["timeseries"][0]["data"];
-    let c = d["instant"]["details"]["air_temperature"].as_f64()?;
-    let sym = d["next_1_hours"]["summary"]["symbol_code"].as_str().or_else(|| d["next_6_hours"]["summary"]["symbol_code"].as_str()).unwrap_or("");
-    let (t, u) = if fahrenheit { (c * 9.0 / 5.0 + 32.0, 'F') } else { (c, 'C') };
-    Some(format!("{} {}°{u}", glyph(sym), t.round() as i64))
-}
-
-/// MET symbol code → a glyph the world's font chain has (☀ ☁ ☂ ☃ ★).
-pub fn glyph(sym: &str) -> char {
-    let s = sym.split('_').next().unwrap_or("");
-    if s.contains("snow") || s.contains("sleet") { '☃' }
-    else if s.contains("rain") || s.contains("thunder") { '☂' }
-    else if s == "clearsky" || s == "fair" { if sym.ends_with("_night") { '★' } else { '☀' } }
-    else { '☁' }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -466,12 +418,5 @@ mod tests {
         assert!(parse_x(&nsfw).is_none());
     }
 
-    #[test]
-    fn weather() {
-        let j = json!({"properties":{"timeseries":[{"data":{"instant":{"details":{"air_temperature":30.6}},
-            "next_1_hours":{"summary":{"symbol_code":"partlycloudy_day"}}}}]}});
-        assert_eq!(weather_line(&j, false).unwrap(), "☁ 31°C");
-        assert_eq!(weather_line(&j, true).unwrap(), "☁ 87°F");
-        assert_eq!(glyph("clearsky_night"), '★');
-    }
+
 }
