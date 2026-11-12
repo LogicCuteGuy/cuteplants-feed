@@ -12,6 +12,15 @@ use crate::Item;
 
 const WIDTHS: [f32; 4] = [48.0, 64.0, 84.0, 112.0];
 const PAD: f32 = 1.0;
+// type scale and radii in u, as in the world's DESIGN-SYSTEM.md: nothing smaller than T_MIN
+const T_LIST: f32 = 2.4;
+const T_BODY: f32 = 2.1;
+const T_BUTTON: f32 = 2.2;
+const T_SUB: f32 = 1.9;
+const T_MIN: f32 = 1.7;
+const R_GRID: f32 = 2.7; // thumbnails in a grid, big pictures
+const R_LIST: f32 = 1.6; // thumbnails in a list row
+const R_PILL: f32 = 9.0; // clamped to half the height: a pill
 
 /// `{"48": {...}, "64": {...}, ...}`, each `{"w": design width, "pad", "views": [list, detail 1, …]}`.
 pub fn screens(src: &str, items: &[Item]) -> Value {
@@ -74,22 +83,22 @@ fn list(src: &str, items: &[Item], w: f32) -> Node {
         let open = format!("v:{}", i + 1);
         match n {
             0 => tap(&open, col(0.5, [
-                vec![image(i, 1.0, 1.2, ""), block(&it.title, 1.35, Role::Ink, 2), text(&it.by, 1.15, Role::InkMuted, 1)],
-                meta(src, it, 1.2).into_iter().collect(),
+                vec![image(i, 1.0, R_GRID, ""), block(&it.title, T_SUB, Role::Ink, 2), text(&it.by, T_MIN, Role::InkMuted, 1)],
+                meta(src, it, T_MIN).into_iter().collect(),
             ].concat())),
             1 => {
-                let mut name = vec![bold(text(&it.by, 1.4, Role::Ink, 1))];
-                if !it.video.is_empty() { name.push(fixed(2.5, label("▶", 1.3, Role::InkMuted, Align::End))); }
+                let mut name = vec![bold(text(&it.by, T_SUB, Role::Ink, 1))];
+                if !it.video.is_empty() { name.push(fixed(2.5, label("▶", T_MIN, Role::InkMuted, Align::End))); }
                 tap(&open, col(1.2, vec![
-                    row(1.0, vec![fixed(8.0, image(i, 1.0, 1.4, "")), col(0.3, vec![row(0.5, name), text(&it.title, 1.35, Role::Ink, 4)])]),
+                    row(1.0, vec![fixed(8.0, image(i, 1.0, R_LIST, "")), col(0.3, vec![row(0.5, name), text(&it.title, T_SUB, Role::Ink, 4)])]),
                     rule(),
                 ]))
             }
             _ => {
                 let thumb = if w < 40.0 { 16.0 } else { 15.0 };
                 tap(&open, row(1.0, vec![
-                    fixed(thumb, image(i, 16.0 / 9.0, 1.0, &badge(it))),
-                    col(0.4, [vec![block(&it.title, 1.4, Role::Ink, 2)], meta(src, it, 1.2).into_iter().collect()].concat()),
+                    fixed(thumb, image(i, 16.0 / 9.0, R_LIST, &badge(it))),
+                    col(0.4, [vec![block(&it.title, T_SUB, Role::Ink, 2)], meta(src, it, T_MIN).into_iter().collect()].concat()),
                 ]))
             }
         }
@@ -99,28 +108,28 @@ fn list(src: &str, items: &[Item], w: f32) -> Node {
 
 fn detail(src: &str, i: usize, it: &Item, w: f32) -> Node {
     let side = w > 60.0; // picture beside the text from 4:3 landscape up
-    let back = tap("b", fixed(10.0, boxed(Role::Surface, 1.6, 0.6, label("‹ {@feed.back}", 1.4, Role::Ink, Align::Center))));
+    let back = tap("b", fixed(12.0, boxed(Role::Surface, R_PILL, 0.7, label("‹ {@feed.back}", T_BUTTON, Role::Ink, Align::Center))));
     let aspect = if src == "yt" { 16.0 / 9.0 } else { 1.0 };
     let mut body = if src == "x" {
-        vec![bold(text(&it.by, 1.6, Role::Ink, 1)), text(&it.title, 1.6, Role::Ink, 14)]
+        vec![bold(text(&it.by, T_BODY, Role::Ink, 1)), text(&it.title, T_BODY, Role::Ink, 14)]
     } else {
-        let mut v = vec![bold(text(&it.title, 1.9, Role::Ink, 3))];
-        if src == "booth" { v.push(text(&it.by, 1.4, Role::InkMuted, 1)); }
-        v.extend(meta(src, it, 1.4));
+        let mut v = vec![bold(text(&it.title, T_LIST, Role::Ink, 3))];
+        if src == "booth" { v.push(text(&it.by, T_SUB, Role::InkMuted, 1)); }
+        v.extend(meta(src, it, T_SUB));
         v
     };
     let action = if !it.video.is_empty() { Some(("p", "{@feed.watch}")) } else if !it.image.is_empty() { Some(("o", "{@feed.open}")) } else { None };
     if let Some((verb, name)) = action {
         body.push(Node::Gap(0.6));
-        body.push(tap(&format!("{verb}:{i}"), fixed(14.0, boxed(Role::Leaf, 1.7, 0.7, bold(label(name, 1.6, Role::OnLeaf, Align::Center))))));
+        body.push(tap(&format!("{verb}:{i}"), fixed(16.0, boxed(Role::Leaf, R_PILL, 0.8, bold(label(name, T_BUTTON, Role::OnLeaf, Align::Center))))));
     }
     // the picture never takes more than ~28 u of height (the band is ~36 u on a landscape screen)
     let main = if side {
         let hero_w = (w * 0.45).min(28.0 * aspect);
-        row(2.0, vec![fixed(hero_w, image(i, aspect, 1.5, &badge(it))), col(0.8, body)])
+        row(2.0, vec![fixed(hero_w, image(i, aspect, R_GRID, &badge(it))), col(0.8, body)])
     } else {
         let hero_w = w.min(30.0 * aspect);
-        let hero = fixed(hero_w, image(i, aspect, 1.5, &badge(it)));
+        let hero = fixed(hero_w, image(i, aspect, R_GRID, &badge(it)));
         let hero = if hero_w < w { row(0.0, vec![Node::Gap(0.0), hero, Node::Gap(0.0)]) } else { hero }; // centred
         col(1.2, [vec![hero], body].concat())
     };

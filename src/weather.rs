@@ -145,7 +145,8 @@ pub fn screens(f: &Forecast) -> Value {
     Value::Object(m)
 }
 
-fn card(child: Node) -> Node { boxed(Role::Surface, 1.4, 1.2, child) }
+// sizes in u as in the world's DESIGN-SYSTEM.md: cards 3.5 radius, nothing smaller than 1.7
+fn card(child: Node) -> Node { boxed(Role::Surface, 3.5, 1.6, child) }
 fn center(s: &str, size: f32, role: Role) -> Node { label(s, size, role, Align::Center) }
 fn rain(p: i64) -> String { if p > 0 { format!("☂ {p}%") } else { String::new() } }
 
@@ -154,12 +155,12 @@ fn body(f: &Forecast, w: f32) -> Node {
         fixed(8.0, center(&f.glyph.to_string(), 6.0, Role::Ink)),
         col(0.4, vec![
             bold(label(&f.temp, 4.2, Role::Ink, Align::Start)),
-            label(&format!("{{@{}}}", f.cond), 1.7, Role::Ink, Align::Start),
-            label(&match f.days.first() { Some(d) => format!("{} / {}  ·  {{@wx.feels|{}}}", d.hi, d.lo, f.feels), None => format!("{{@wx.feels|{}}}", f.feels) }, 1.3, Role::InkMuted, Align::Start),
+            label(&format!("{{@{}}}", f.cond), 2.1, Role::Ink, Align::Start),
+            label(&match f.days.first() { Some(d) => format!("{} / {}  ·  {{@wx.feels|{}}}", d.hi, d.lo, f.feels), None => format!("{{@wx.feels|{}}}", f.feels) }, 1.9, Role::InkMuted, Align::Start),
         ]),
     ]));
     let today_rain = f.days.first().map_or(-1, |d| d.rain);
-    let stat = |key: &str, v: String| card(col(0.3, vec![label(&format!("{{@{key}}}"), 1.2, Role::InkMuted, Align::Start), bold(label(&v, 1.6, Role::Ink, Align::Start))]));
+    let stat = |key: &str, v: String| card(col(0.3, vec![label(&format!("{{@{key}}}"), 1.7, Role::InkMuted, Align::Start), bold(label(&v, 2.1, Role::Ink, Align::Start))]));
     let stats = grid(3, 1.0, vec![
         stat("wx.humidity", if f.humidity >= 0 { format!("{}%", f.humidity) } else { "–".into() }),
         stat("wx.wind", f.wind.clone()),
@@ -167,27 +168,27 @@ fn body(f: &Forecast, w: f32) -> Node {
     ]);
     let hour_cols = if w >= 60.0 { 8 } else { 4 };
     let hours = card(col(0.8, vec![
-        label("{@wx.hourly}", 1.3, Role::InkMuted, Align::Start),
+        label("{@wx.hourly}", 1.9, Role::InkMuted, Align::Start),
         grid(hour_cols, 0.6, f.hours.iter().enumerate().map(|(k, h)| col(0.2, vec![
-            center(if k == 0 { "{@wx.now}" } else { &h.time }, 1.15, Role::InkMuted),
+            center(if k == 0 { "{@wx.now}" } else { &h.time }, 1.7, Role::InkMuted),
             center(&h.glyph.to_string(), 2.2, Role::Ink),
-            bold(center(&h.temp, 1.4, Role::Ink)),
-            center(&rain(h.rain), 1.0, Role::Sky),
+            bold(center(&h.temp, 1.9, Role::Ink)),
+            center(&rain(h.rain), 1.7, Role::Sky),
         ])).collect()),
     ]));
-    let mut week = vec![label("{@wx.week}", 1.3, Role::InkMuted, Align::Start)];
+    let mut week = vec![label("{@wx.week}", 1.9, Role::InkMuted, Align::Start)];
     for (k, d) in f.days.iter().enumerate() {
         if k > 0 { week.push(boxed(Role::Line, 0.0, 0.0, Node::Gap(0.12))); }
         let name = if k == 0 { "{@wx.today}".to_owned() } else { format!("{{@{}}}", WEEK[d.weekday]) };
         week.push(row(1.0, vec![
-            fixed(11.0, label(&name, 1.4, Role::Ink, Align::Start)),
+            fixed(11.0, label(&name, 1.9, Role::Ink, Align::Start)),
             fixed(4.0, center(&d.glyph.to_string(), 1.8, Role::Ink)),
-            label(&rain(d.rain), 1.2, Role::Sky, Align::Start),
-            fixed(12.0, label(&format!("<b>{}</b>  {}", d.hi, d.lo), 1.4, Role::Ink, Align::End)),
+            label(&rain(d.rain), 1.7, Role::Sky, Align::Start),
+            fixed(12.0, label(&format!("<b>{}</b>  {}", d.hi, d.lo), 1.9, Role::Ink, Align::End)),
         ]));
     }
     let week = card(col(0.7, week));
-    let note = label("Open-Meteo.com (CC BY 4.0)", 1.0, Role::InkMuted, Align::End);
+    let note = label("Open-Meteo.com (CC BY 4.0)", 1.7, Role::InkMuted, Align::End);
     if w > 70.0 {
         // wide: now + stats on the left, the week on the right
         col(1.2, vec![row(1.2, vec![col(1.2, vec![hero, stats, hours]), fixed((w * 0.4).min(44.0), week)]), note])
